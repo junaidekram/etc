@@ -186,7 +186,12 @@ const imsProtons = [];
 const timers = [];
 
 let protonTally = 0;
-let o2Tally = 0;
+let c4ElectronTally = 0;
+let c4ProtonTally = 0;
+let qCarrier = null;
+const qSources = [];
+let qSourceIndex = 0;
+let cytCCarrier = null;
 
 /* =========================================================
    SCHEDULER
@@ -442,31 +447,45 @@ function pumpProtonsAt(c, n){
    Q SHUTTLE
    ========================================================= */
 function startQCycle(source){
-  const qp = LAYOUT.q;
-  const c3 = LAYOUT.c3;
   const pickupX = source === 'I'
     ? LAYOUT.c1.cx + LAYOUT.c1.w/2 + 10
     : LAYOUT.c2.cx + LAYOUT.c2.w/2 + 10;
+  if(!qSources.some(function(entry){ return entry.source === source; })){
+    qSources.push({source:source, pickupX:pickupX});
+  }
+  if(qCarrier) return;
 
-  addP({
-    kind:'pill', label:'Q', color:COL.q,
-    path:[[qp.x, qp.y],[pickupX + 45, qp.y],[pickupX + 6, qp.y]],
-    speed: 160,
-    onDone: function(p){
-      p.wait = 0.2;
+  const qp = LAYOUT.q;
+  const c3 = LAYOUT.c3;
+  const dockQ = [qp.x, qp.y];
+  const dockIII = [c3.cx - c3.w/2 - 12, qp.y];
+
+  function shuttleFromQ(p){
+    const activeSources = qSources.filter(function(entry){
+      return entry.source !== 'II' || fadhEnabled;
+    });
+    const sourceDock = activeSources[qSourceIndex % activeSources.length];
+    qSourceIndex++;
+    p.label = 'Q'; p.color = COL.q;
+    p.setPath([dockQ,[sourceDock.pickupX + 45, qp.y],[sourceDock.pickupX + 6, qp.y]]);
+    p.onDone = function(){
       p.label = 'QH₂'; p.color = COL.qh2;
-      p.setPath([[pickupX+6, qp.y],[qp.x, qp.y],[c3.cx - c3.w/2 - 12, qp.y]]);
-      p.onDone = function(q){
-        q.wait = 0.25;
-        q.label = 'Q'; q.color = COL.q;
-        q.setPath([[c3.cx - c3.w/2 - 12, qp.y],[qp.x, qp.y],[qp.x, qp.y + 44]]);
-        q.onDone = function(r){ r.fadeAfter = 0; r.fadeDur = 1.0; };
+      p.setPath([[sourceDock.pickupX + 6, qp.y], dockQ, dockIII]);
+      p.onDone = function(){
+        p.label = 'Q'; p.color = COL.q;
+        p.setPath([dockIII, dockQ]);
+        p.onDone = function(){ shuttleFromQ(p); };
         onQDelivered();
       };
-    }
+    };
+  }
+
+  qCarrier = addP({
+    kind:'pill', label:'Q', color:COL.q,
+    path:[dockQ,dockQ], speed: 210,
+    onDone:function(p){ shuttleFromQ(p); }
   });
 }
-
 /* =========================================================
    COMPLEX III → CYTOCHROME c
    ========================================================= */
@@ -492,28 +511,39 @@ function onQDelivered(){
 }
 
 function startCytC(){
+  if(cytCCarrier) return;
   const home = LAYOUT.cytc;
   const c3 = LAYOUT.c3, c4 = LAYOUT.c4;
   const dockIII = [c3.cx + c3.w/2 + 4, MEM_TOP - 22];
   const dockIV  = [c4.cx - c4.w/2 - 4, MEM_TOP - 22];
 
-  addP({
-    kind:'cyt',
-    path:[[home.x, home.y], dockIII],
-    speed: 210,
-    onDone: function(p){
-      p.wait = 0.15;
+  function deliverToIII(p){
+    p.loaded = false;
+    p.setPath([dockIV, [home.x, home.y], dockIII]);
+    p.onDone = function(){
+      p.loaded = true;
       p.setPath([dockIII, [home.x, home.y], dockIV]);
-      p.onDone = function(q){
-        q.wait = 0.15;
+      p.onDone = function(){
+        p.loaded = false;
         onCytCDelivered();
-        q.setPath([dockIV, [home.x, home.y]]);
-        q.onDone = function(r){ r.fadeAfter = 0; r.fadeDur = 0.6; };
+        deliverToIII(p);
+      };
+    };
+  }
+
+  cytCCarrier = addP({
+    kind:'cyt', loaded:false, path:[[home.x, home.y], dockIII], speed: 330,
+    onDone:function(p){
+      p.loaded = true;
+      p.setPath([dockIII, [home.x, home.y], dockIV]);
+      p.onDone = function(){
+        p.loaded = false;
+        onCytCDelivered();
+        deliverToIII(p);
       };
     }
   });
 }
-
 /* =========================================================
    COMPLEX IV → OXYGEN → WATER
    ========================================================= */
@@ -521,27 +551,43 @@ function onCytCDelivered(){
   const c4 = LAYOUT.c4;
   pumpProtonsAt(c4, 2);
 
-  for(let i = 0; i < 2; i++){
-    addP({
-      kind:'electron', r:5, trailOn:true,
-      path:[
-        [c4.cx - c4.w/2 + 4, MEM_TOP - 22],
-        [c4.cx - 16, 350],
-        [c4.cx + 16, 386],
-        [c4.cx - 8, 430],
-        [c4.cx, 486]
-      ],
-      speed: 175,
-      wait: i * 0.14,
-      onDone: function(p){ p.fadeAfter = 0; p.fadeDur = 0.35; }
-    });
-  }
+  addP({
+    kind:'electron', r:5, trailOn:true,
+    path:[
+      [c4.cx - c4.w/2 + 4, MEM_TOP - 22],
+      [c4.cx - 16, 350],
+      [c4.cx + 16, 386],
+      [c4.cx - 8, 430],
+      [c4.cx, 486]
+    ],
+    speed: 220,
+    onDone: function(p){ p.fadeAfter = 0; p.fadeDur = 0.35; }
+  });
 
-  o2Tally++;
-  if(o2Tally >= 2){
-    o2Tally = 0;
-    spawnOxygen();
-  }
+  c4ElectronTally++;
+  addC4Proton();
+  tryMakeWater();
+}
+
+function addC4Proton(){
+  const c4 = LAYOUT.c4;
+  addP({
+    kind:'proton', color:COL.proton, r:5.5,
+    path:[[c4.cx + 66, 218],[c4.cx + 36, 270],[c4.cx + 8, 326],[c4.cx, 382]],
+    speed: 155,
+    onDone:function(p){
+      p.dead = true;
+      c4ProtonTally++;
+      tryMakeWater();
+    }
+  });
+}
+
+function tryMakeWater(){
+  if(c4ElectronTally < 2 || c4ProtonTally < 2) return;
+  c4ElectronTally -= 2;
+  c4ProtonTally -= 2;
+  spawnOxygen();
 }
 
 function spawnOxygen(){
@@ -900,6 +946,15 @@ function drawPill(p){
   ctx.textBaseline = 'middle';
   ctx.fillText(p.label, p.x, p.y + 0.5);
 
+  if(p.label === 'QH₂') {
+    for(let i = 0; i < 2; i++){
+      ctx.fillStyle = '#eafaff';
+      ctx.beginPath();
+      ctx.arc(p.x - 7 + i * 14, p.y - 16, 2.8, 0, 6.283);
+      ctx.fill();
+    }
+  }
+
   ctx.restore();
 }
 
@@ -926,6 +981,15 @@ function drawCytC(p){
   ctx.textAlign = 'center';
   ctx.textBaseline = 'middle';
   ctx.fillText('c', p.x, p.y + 0.5);
+
+  if(p.loaded){
+    ctx.fillStyle = '#eafaff';
+    ctx.shadowColor = COL.electron;
+    ctx.shadowBlur = 8;
+    ctx.beginPath();
+    ctx.arc(p.x + 13, p.y - 7, 3.2, 0, 6.283);
+    ctx.fill();
+  }
 
   ctx.restore();
 }
@@ -982,7 +1046,7 @@ function render(){
   drawSynthase();
 
   drawComplex(LAYOUT.c1);
-  drawComplex(LAYOUT.c2);
+  if(fadhEnabled) drawComplex(LAYOUT.c2);
   drawComplex(LAYOUT.c3);
   drawComplex(LAYOUT.c4);
 
@@ -1038,12 +1102,10 @@ function seed(){
   // start the reaction chain
   spawnNADH();
   schedule(1.2, spawnFADH2);
-  schedule(2.0, spawnOxygen);
 
   // recurring sources
   loop(4.0, spawnNADH, 4.0);
   loop(4.8, spawnFADH2, 2.4);
-  loop(6.5, spawnOxygen, 5.0);
 }
 
 /* =========================================================
