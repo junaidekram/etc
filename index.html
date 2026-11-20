@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Electron Transport Chain — Live Animation</title>
+<style>
+  :root{
+    --bg:#05080e;
+    --panel:#0c1420;
+    --line:#1b2739;
+    --text:#dbe6f5;
+    --muted:#7d8ea6;
+  }
+  *{box-sizing:border-box}
+  html,body{
+    margin:0;padding:0;background:var(--bg);color:var(--text);
+    font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+    -webkit-font-smoothing:antialiased;
+  }
+  .wrap{max-width:1440px;margin:0 auto;padding:20px 20px 46px;}
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:12px;}
+  h1{font-size:19px;margin:0;letter-spacing:.3px;font-weight:650;}
+  .sub{color:var(--muted);font-size:13px;}
+  .stage{
+    position:relative;border-radius:16px;overflow:hidden;
+    border:1px solid var(--line);
+    box-shadow:0 22px 60px -22px #000, inset 0 0 0 1px rgba(255,255,255,.025);
+    background:#05080e;
+  }
+  canvas{display:block;width:100%;height:auto;}
+
+  .controls{
+    display:flex;gap:10px;flex-wrap:wrap;align-items:center;
+    margin-top:14px;padding:12px 14px;border-radius:12px;
+    background:var(--panel);border:1px solid var(--line);
+  }
+  button{
+    font:inherit;font-size:13px;font-weight:600;color:var(--text);
+    background:#16202f;border:1px solid #253347;border-radius:9px;
+    padding:8px 14px;cursor:pointer;transition:.16s;
+  }
+  button:hover{background:#1d2a3d;border-color:#33465f;}
+  button.active{background:#1e3a5f;border-color:#3b82f6;color:#bfdbfe;}
+  .seg{display:flex;gap:6px;}
+  .toggle{
+    display:flex;align-items:center;gap:9px;font-size:13px;font-weight:600;
+    cursor:pointer;user-select:none;padding:7px 12px;border-radius:9px;
+    background:#16202f;border:1px solid #253347;transition:.16s;
+  }
+  .toggle:hover{background:#1d2a3d;}
+  .toggle input{display:none;}
+  .switch{
+    width:36px;height:20px;border-radius:10px;background:#2c3a4d;position:relative;
+    transition:.2s;flex:0 0 auto;
+  }
+  .switch::after{
+    content:"";position:absolute;top:2px;left:2px;width:16px;height:16px;
+    border-radius:50%;background:#8595aa;transition:.2s;
+  }
+  .toggle input:checked + .switch{background:#4c1d95;}
+  .toggle input:checked + .switch::after{left:18px;background:#c4b5fd;}
+
+  .legend{
+    display:flex;gap:16px;flex-wrap:wrap;margin-top:14px;
+    font-size:12px;color:var(--muted);
+  }
+  .legend span{display:flex;align-items:center;gap:6px;}
+  .dot{width:10px;height:10px;border-radius:50%;box-shadow:0 0 10px currentColor;background:currentColor;}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Electron Transport Chain</h1>
+    <span class="sub">inner mitochondrial membrane · oxidative phosphorylation</span>
+  </header>
+
+  <div class="stage">
+    <canvas id="scene"></canvas>
+  </div>
+
+  <div class="controls">
+    <button id="playBtn" class="active">⏸ Pause</button>
+    <div class="seg">
+      <button data-speed="0.5">0.5×</button>
+      <button data-speed="1" class="active">1×</button>
+      <button data-speed="2">2×</button>
+    </div>
+    <label class="toggle">
+      <input type="checkbox" id="fadhToggle" checked>
+      <span class="switch"></span>
+      FADH₂ / Complex II
+    </label>
+  </div>
+
+  <div class="legend">
+    <span style="color:#ff9a6b"><i class="dot"></i>H⁺ proton</span>
+    <span style="color:#7dd3fc"><i class="dot"></i>e⁻ electron</span>
+    <span style="color:#a3e635"><i class="dot"></i>NADH / NAD⁺</span>
+    <span style="color:#d8b4fe"><i class="dot"></i>FADH₂ / FAD</span>
+    <span style="color:#ddd6fe"><i class="dot"></i>Q / QH₂</span>
+    <span style="color:#f472b6"><i class="dot"></i>O₂</span>
+    <span style="color:#60a5fa"><i class="dot"></i>H₂O</span>
+    <span style="color:#fbbf24"><i class="dot"></i>ATP</span>
+  </div>
+</div>
+
+<script>
+/* =========================================================
+   ELECTRON TRANSPORT CHAIN — animated canvas model
+   ========================================================= */
+
+const W = 1400, H = 780;
+const DPR = Math.min(2, window.devicePixelRatio || 1);
+const MEM_TOP = 305, MEM_BOT = 475;
+
+const cv = document.getElementById('scene');
+cv.width  = W * DPR;
+cv.height = H * DPR;
+const ctx = cv.getContext('2d');
+
+/* ---------------- palette ---------------- */
+const COL = {
+  c1:'#4f8ef7', c2:'#a78bfa', c3:'#22d3ee', c4:'#2dd4bf', atpSyn:'#fbbf24',
+  proton:'#ff9a6b', electron:'#7dd3fc',
+  nadh:'#a3e635', nad:'#65a30d',
+  fadh:'#d8b4fe', fad:'#8b5cf6',
+  q:'#c4b5fd', qh2:'#ede9fe',
+  o2:'#f472b6', h2o:'#60a5fa',
+  atp:'#fbbf24', adp:'#94a3b8', pi:'#cbd5e1',
+  cytc:'#67e8f9'
+};
+
+/* ---------------- helpers ---------------- */
+function hexToRgb(h){
+  h = h.replace('#','');
+  if(h.length === 3) h = h.split('').map(c=>c+c).join('');
+  const n = parseInt(h,16);
+  return [n>>16 & 255, n>>8 & 255, n & 255];
+}
+function rgba(h,a){ const [r,g,b] = hexToRgb(h); return `rgba(${r},${g},${b},${a})`; }
+
+function roundRect(c,x,y,w,h,r){
+  r = Math.min(r, w/2, h/2);
+  c.beginPath();
+  c.moveTo(x+r,y);
+  c.arcTo(x+w,y,x+w,y+h,r);
+  c.arcTo(x+w,y+h,x,y+h,r);
+  c.arcTo(x,y+h,x,y,r);
+  c.arcTo(x,y,x+w,y,r);
+  c.closePath();
+}
+
+/* ---------------- glow sprite cache ---------------- */
+const glowCache = {};
+function glowFor(color, r){
+  const key = color + '_' + r;
+  if(glowCache[key]) return glowCache[key];
+  const size = r * 3.6;
+  const c = document.createElement('canvas');
+  c.width = c.height = Math.ceil(size*2);
+  const g = c.getContext('2d');
+  const [rr,gg,bb] = hexToRgb(color);
+  const grd = g.createRadialGradient(size,size,0,size,size,size);
+  grd.addColorStop(0,    `rgba(${rr},${gg},${bb},0.95)`);
+  grd.addColorStop(0.22, `rgba(${rr},${gg},${bb},0.55)`);
+  grd.addColorStop(0.55, `rgba(${rr},${gg},${bb},0.16)`);
+  grd.addColorStop(1,    `rgba(${rr},${gg},${bb},0)`);
+  g.fillStyle = grd;
+  g.fillRect(0,0,size*2,size*2);
+  glowCache[key] = {img:c, size};
+  return glowCache[key];
+}
+
+/* ---------------- simulation clock ---------------- */
+let simTime = 0;
+let running = true;
+let speedMul = 1;
+let fadhEnabled = true;
+let protonCount = 0;
+
+const timers = [];
+function after(ms, fn){ timers.push({t: simTime + ms, fn}); }
+function updateTimers(){
+  for(let i = timers.length-1; i >= 0; i--){
+    if(timers[i].t <= simTime){
+      const f = timers[i].fn;
+      timers.splice(i,1);
+      f();
+    }
+  }
+}
+
+/* ---------------- actor (mover) ---------------- */
+const actors = [];
+function add(a){ actors.push(a); return a; }
+
+class Mover{
+  constructor(cfg){
+    this.x = 0; this.y = 0;
+    this.wp = [];
+    this.i = 1;
+    this.speed = 190;
+    this.alpha = 1;
+    this.dead = false;
+    this.wait = 0;
+    this.born = simTime;
+    this.wiggle = null;
+    this.drift = null;
+    this.custom = null;
+    this.onFinish = null;
+    this.kind = 'ion';
+    this.color = '#fff';
+    this.r = 6;
+    this.text = '';
+    this.sym = '';
+    this.trail = false;
+    this._trail = [];
+    this.life = 999;
+    Object.assign(this, cfg);
+
+    if(this.wp.length){
+      this.x = this.wp[0].x;
+      this.y = this.wp[0].y;
+      if(this.wp[0].dwell) this.wait = this.wp[0].dwell;
+      this.i = 1;
+    }
+  }
+
+  update(dt){
+    if(this.dead) return;
+
+    if(this.wait > 0){
+      this.wait -= dt*1000;
+    } else if(this.i < this.wp.length){
+      const t = this.wp[this.i];
+      const dx = t.x - this.x, dy = t.y - this.y;
+      const d = Math.hypot(dx,dy) || 1;
+      const step = (t.speed || this.speed) * dt;
+      if(d <= step){
+        this.x = t.x; this.y = t.y;
+        this.i++;
+        if(t.dwell) this.wait = t.dwell;
+        if(t.cb) t.cb(this);
+      } else {
+        this.x += dx/d*step;
+        this.y += dy/d*step;
+      }
+    } else {
+      if(this.onFinish){
+        const f = this.onFinish;
+        this.onFinish = null;
+        f(this);
+      }
+      if(!this.dead && !this.drift && !this.custom) this.dead = true;
+    }
+
+    if(!this.dead && this.custom && this.i >= this.wp.length){
+      this.custom(this, dt);
+    }
+
+    if(!this.dead && this.drift && this.i >= this.wp.length){
+      this.x += this.drift.vx * dt;
+      this.y += this.drift.vy * dt;
+      this.alpha -= this.drift.fade * dt;
+      if(this.alpha <= 0){ this.alpha = 0; this.dead = true; }
+    }
+
+    if(this.trail){
+      this._trail.push({x:this.x, y:this.y});
+      if(this._trail.length > 11) this._trail.shift();
+    }
+  }
+}
+
+/* ---------------- protein complexes ---------------- */
+const complexes = [
+  {x:172,  w:86, top:268, bot:566, color:COL.c1,  glow:0},
+  {x:392,  w:78, top:305, bot:512, color:COL.c2,  glow:0},
+  {x:684,  w:90, top:272, bot:500, color:COL.c3,  glow:0},
+  {x:936,  w:84, top:272, bot:500, color:COL.c4,  glow:0}
+];
+const SYN = {x:1180, top:305, bot:475, w:60, headY:572, headR:52};
+
+/* =========================================================
+   CHOREOGRAPHY
+   ========================================================= */
+
+/* --- protons drifting across the intermembrane space --- */
+function imsFlow(a, dt){
+  const tx = a.tx, ty = a.ty;
+  const dx = tx - a.x, dy = ty - a.y;
+  const d = Math.hypot(dx,dy) || 1;
+  const sp = 105;
+  a.x += dx/d * sp * dt;
+  a.y += dy/d * sp * dt;
+
+  a.life -= dt;
+  if(a.life < 1.4) a.alpha = Math.max(0, a.life/1.4);
+
+  if(d < 24){
+    a.dead = true;
+    spawnSynthaseProton();
+  } else if(a.life <= 0){
+    a.dead = true;
+  }
+}
+
+function makeIMSProton(x, y){
+  add(new Mover({
+    kind:'ion', sym:'+', color:COL.proton, r:6.5,
+    wiggle:{amp:3, f:6, p:Math.random()*6.28},
+    wp:[{x, y, speed:0}],
+    custom: imsFlow,
+    life: 
