@@ -18,8 +18,8 @@
     font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
     -webkit-font-smoothing:antialiased;
   }
-  .wrap{max-width:1440px;margin:0 auto;padding:20px 20px 46px;}
-  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:12px;}
+  .wrap{max-width:1500px;margin:0 auto;padding:20px 20px 46px;}
+  header{display:flex;align-items:baseline;gap:14px;flex-wrap:wrap;margin-bottom:14px;}
   h1{font-size:19px;margin:0;letter-spacing:.3px;font-weight:650;}
   .sub{color:var(--muted);font-size:13px;}
   .stage{
@@ -99,7 +99,7 @@
     <span style="color:#7dd3fc"><i class="dot"></i>e⁻ electron</span>
     <span style="color:#a3e635"><i class="dot"></i>NADH / NAD⁺</span>
     <span style="color:#d8b4fe"><i class="dot"></i>FADH₂ / FAD</span>
-    <span style="color:#ddd6fe"><i class="dot"></i>Q / QH₂</span>
+    <span style="color:#c4b5fd"><i class="dot"></i>Q / QH₂</span>
     <span style="color:#f472b6"><i class="dot"></i>O₂</span>
     <span style="color:#60a5fa"><i class="dot"></i>H₂O</span>
     <span style="color:#fbbf24"><i class="dot"></i>ATP</span>
@@ -107,42 +107,38 @@
 </div>
 
 <script>
+(function(){
+'use strict';
+
 /* =========================================================
-   ELECTRON TRANSPORT CHAIN — animated canvas model
+   CANVAS SETUP
    ========================================================= */
-
 const W = 1400, H = 780;
+const MEM_TOP = 320, MEM_BOT = 470;
 const DPR = Math.min(2, window.devicePixelRatio || 1);
-const MEM_TOP = 305, MEM_BOT = 475;
 
-const cv = document.getElementById('scene');
-cv.width  = W * DPR;
-cv.height = H * DPR;
-const ctx = cv.getContext('2d');
+const canvas = document.getElementById('scene');
+canvas.width = W * DPR;
+canvas.height = H * DPR;
+const ctx = canvas.getContext('2d');
+ctx.scale(DPR, DPR);
 
-/* ---------------- palette ---------------- */
-const COL = {
-  c1:'#4f8ef7', c2:'#a78bfa', c3:'#22d3ee', c4:'#2dd4bf', atpSyn:'#fbbf24',
-  proton:'#ff9a6b', electron:'#7dd3fc',
-  nadh:'#a3e635', nad:'#65a30d',
-  fadh:'#d8b4fe', fad:'#8b5cf6',
-  q:'#c4b5fd', qh2:'#ede9fe',
-  o2:'#f472b6', h2o:'#60a5fa',
-  atp:'#fbbf24', adp:'#94a3b8', pi:'#cbd5e1',
-  cytc:'#67e8f9'
-};
-
-/* ---------------- helpers ---------------- */
+/* =========================================================
+   UTILITIES
+   ========================================================= */
 function hexToRgb(h){
   h = h.replace('#','');
   if(h.length === 3) h = h.split('').map(c=>c+c).join('');
   const n = parseInt(h,16);
-  return [n>>16 & 255, n>>8 & 255, n & 255];
+  return [(n>>16)&255, (n>>8)&255, n&255];
 }
-function rgba(h,a){ const [r,g,b] = hexToRgb(h); return `rgba(${r},${g},${b},${a})`; }
-
+function rgba(h,a){
+  if(h.charAt(0) !== '#') return h;
+  const [r,g,b] = hexToRgb(h);
+  return `rgba(${r},${g},${b},${a})`;
+}
 function roundRect(c,x,y,w,h,r){
-  r = Math.min(r, w/2, h/2);
+  r = Math.min(r, Math.abs(w)/2, Math.abs(h)/2);
   c.beginPath();
   c.moveTo(x+r,y);
   c.arcTo(x+w,y,x+w,y+h,r);
@@ -152,165 +148,935 @@ function roundRect(c,x,y,w,h,r){
   c.closePath();
 }
 
-/* ---------------- glow sprite cache ---------------- */
-const glowCache = {};
-function glowFor(color, r){
-  const key = color + '_' + r;
-  if(glowCache[key]) return glowCache[key];
-  const size = r * 3.6;
-  const c = document.createElement('canvas');
-  c.width = c.height = Math.ceil(size*2);
-  const g = c.getContext('2d');
-  const [rr,gg,bb] = hexToRgb(color);
-  const grd = g.createRadialGradient(size,size,0,size,size,size);
-  grd.addColorStop(0,    `rgba(${rr},${gg},${bb},0.95)`);
-  grd.addColorStop(0.22, `rgba(${rr},${gg},${bb},0.55)`);
-  grd.addColorStop(0.55, `rgba(${rr},${gg},${bb},0.16)`);
-  grd.addColorStop(1,    `rgba(${rr},${gg},${bb},0)`);
-  g.fillStyle = grd;
-  g.fillRect(0,0,size*2,size*2);
-  glowCache[key] = {img:c, size};
-  return glowCache[key];
-}
+/* =========================================================
+   PALETTE + LAYOUT
+   ========================================================= */
+const COL = {
+  c1:'#5b9dff', c2:'#a78bfa', c3:'#34d399', c4:'#22d3ee', atpSyn:'#fbbf24',
+  proton:'#ff9a6b', electron:'#7dd3fc',
+  nadh:'#a3e635', nad:'#84cc16',
+  fadh:'#d8b4fe', fad:'#a855f7',
+  q:'#c4b5fd', qh2:'#ede9fe',
+  o2:'#f472b6', h2o:'#60a5fa',
+  atp:'#fbbf24', adp:'#94a3b8',
+  cytc:'#67e8f9'
+};
 
-/* ---------------- simulation clock ---------------- */
+const MID_Y = 392;              // mid-membrane electron transfer height
+const LAYOUT = {
+  c1:{cx:175, w:88, top:292, bot:508, color:COL.c1, num:'I',   name:'Complex I'},
+  c2:{cx:352, w:72, top:312, bot:488, color:COL.c2, num:'II',  name:'Complex II'},
+  c3:{cx:600, w:90, top:288, bot:500, color:COL.c3, num:'III', name:'Complex III'},
+  c4:{cx:852, w:84, top:292, bot:496, color:COL.c4, num:'IV',  name:'Complex IV'},
+  q:{x:465, y:MID_Y},
+  cytc:{x:718, y:262},
+  syn:{x:1150, headY:572, headR:56}
+};
+
+/* =========================================================
+   STATE
+   ========================================================= */
 let simTime = 0;
 let running = true;
 let speedMul = 1;
 let fadhEnabled = true;
-let protonCount = 0;
 
+const particles = [];
+const imsProtons = [];
 const timers = [];
-function after(ms, fn){ timers.push({t: simTime + ms, fn}); }
-function updateTimers(){
-  for(let i = timers.length-1; i >= 0; i--){
-    if(timers[i].t <= simTime){
-      const f = timers[i].fn;
-      timers.splice(i,1);
-      f();
-    }
-  }
-}
 
-/* ---------------- actor (mover) ---------------- */
-const actors = [];
-function add(a){ actors.push(a); return a; }
-
-class Mover{
-  constructor(cfg){
-    this.x = 0; this.y = 0;
-    this.wp = [];
-    this.i = 1;
-    this.speed = 190;
-    this.alpha = 1;
-    this.dead = false;
-    this.wait = 0;
-    this.born = simTime;
-    this.wiggle = null;
-    this.drift = null;
-    this.custom = null;
-    this.onFinish = null;
-    this.kind = 'ion';
-    this.color = '#fff';
-    this.r = 6;
-    this.text = '';
-    this.sym = '';
-    this.trail = false;
-    this._trail = [];
-    this.life = 999;
-    Object.assign(this, cfg);
-
-    if(this.wp.length){
-      this.x = this.wp[0].x;
-      this.y = this.wp[0].y;
-      if(this.wp[0].dwell) this.wait = this.wp[0].dwell;
-      this.i = 1;
-    }
-  }
-
-  update(dt){
-    if(this.dead) return;
-
-    if(this.wait > 0){
-      this.wait -= dt*1000;
-    } else if(this.i < this.wp.length){
-      const t = this.wp[this.i];
-      const dx = t.x - this.x, dy = t.y - this.y;
-      const d = Math.hypot(dx,dy) || 1;
-      const step = (t.speed || this.speed) * dt;
-      if(d <= step){
-        this.x = t.x; this.y = t.y;
-        this.i++;
-        if(t.dwell) this.wait = t.dwell;
-        if(t.cb) t.cb(this);
-      } else {
-        this.x += dx/d*step;
-        this.y += dy/d*step;
-      }
-    } else {
-      if(this.onFinish){
-        const f = this.onFinish;
-        this.onFinish = null;
-        f(this);
-      }
-      if(!this.dead && !this.drift && !this.custom) this.dead = true;
-    }
-
-    if(!this.dead && this.custom && this.i >= this.wp.length){
-      this.custom(this, dt);
-    }
-
-    if(!this.dead && this.drift && this.i >= this.wp.length){
-      this.x += this.drift.vx * dt;
-      this.y += this.drift.vy * dt;
-      this.alpha -= this.drift.fade * dt;
-      if(this.alpha <= 0){ this.alpha = 0; this.dead = true; }
-    }
-
-    if(this.trail){
-      this._trail.push({x:this.x, y:this.y});
-      if(this._trail.length > 11) this._trail.shift();
-    }
-  }
-}
-
-/* ---------------- protein complexes ---------------- */
-const complexes = [
-  {x:172,  w:86, top:268, bot:566, color:COL.c1,  glow:0},
-  {x:392,  w:78, top:305, bot:512, color:COL.c2,  glow:0},
-  {x:684,  w:90, top:272, bot:500, color:COL.c3,  glow:0},
-  {x:936,  w:84, top:272, bot:500, color:COL.c4,  glow:0}
-];
-const SYN = {x:1180, top:305, bot:475, w:60, headY:572, headR:52};
+let protonTally = 0;
+let o2Tally = 0;
 
 /* =========================================================
-   CHOREOGRAPHY
+   SCHEDULER
    ========================================================= */
+function schedule(delay, fn){ timers.push({at: simTime + delay, fn}); }
+function runTimers(){
+  for(let i = timers.length-1; i >= 0; i--){
+    if(timers[i].at <= simTime){
+      const f = timers[i].fn;
+      timers.splice(i,1);
+      try{ f(); }catch(e){ console.error(e); }
+    }
+  }
+}
+function loop(period, fn, phase){
+  schedule(phase || 0, function run(){
+    try{ fn(); }catch(e){ console.error(e); }
+    schedule(period, run);
+  });
+}
 
-/* --- protons drifting across the intermembrane space --- */
-function imsFlow(a, dt){
-  const tx = a.tx, ty = a.ty;
-  const dx = tx - a.x, dy = ty - a.y;
-  const d = Math.hypot(dx,dy) || 1;
-  const sp = 105;
-  a.x += dx/d * sp * dt;
-  a.y += dy/d * sp * dt;
+/* =========================================================
+   PATH HELPERS
+   ========================================================= */
+function buildCum(path){
+  const cum = [0];
+  for(let i = 1; i < path.length; i++){
+    cum.push(cum[i-1] + Math.hypot(path[i][0]-path[i-1][0], path[i][1]-path[i-1][1]));
+  }
+  return cum;
+}
+function posAt(path, cum, d){
+  const total = cum[cum.length-1];
+  if(d <= 0) return [path[0][0], path[0][1]];
+  if(d >= total){ const l = path[path.length-1]; return [l[0], l[1]]; }
+  let i = 0;
+  while(i < cum.length-2 && cum[i+1] < d) i++;
+  const segLen = (cum[i+1]-cum[i]) || 1;
+  const t = (d - cum[i]) / segLen;
+  const a = path[i], b = path[i+1];
+  return [a[0] + (b[0]-a[0])*t, a[1] + (b[1]-a[1])*t];
+}
 
-  a.life -= dt;
-  if(a.life < 1.4) a.alpha = Math.max(0, a.life/1.4);
+/* =========================================================
+   PARTICLE
+   ========================================================= */
+class Particle{
+  constructor(o){
+    this.x = 0; this.y = 0;
+    this.vx = 0; this.vy = 0;
+    this.alpha = 1;
+    this.dead = false;
+    this.kind = 'dot';
+    this.color = '#ffffff';
+    this.r = 6;
+    this.label = '';
+    this.path = null;
+    this.cum = null;
+    this.dist = 0;
+    this.speed = 140;
+    this.wait = 0;
+    this.onDone = null;
+    this.age = 0;
+    this.fadeAfter = null;
+    this.fadeDur = 0.8;
+    this.trailOn = false;
+    this.trail = [];
+    Object.assign(this, o);
+    if(this.path) this.setPath(this.path);
+  }
+  setPath(path){
+    this.path = path;
+    this.cum = buildCum(path);
+    this.dist = 0;
+    this.x = path[0][0];
+    this.y = path[0][1];
+  }
+  update(dt){
+    if(this.dead) return;
+    this.age += dt;
 
-  if(d < 24){
-    a.dead = true;
-    spawnSynthaseProton();
-  } else if(a.life <= 0){
-    a.dead = true;
+    if(this.wait > 0){
+      this.wait -= dt;
+      if(this.wait > 0) return;
+    }
+
+    if(this.path){
+      this.dist += this.speed * dt;
+      const total = this.cum[this.cum.length-1];
+      if(this.dist >= total){
+        const l = this.path[this.path.length-1];
+        this.x = l[0]; this.y = l[1];
+        this.path = null; this.cum = null;
+        if(this.onDone){
+          const f = this.onDone;
+          this.onDone = null;
+          f(this);
+        }
+      } else {
+        const p = posAt(this.path, this.cum, this.dist);
+        this.x = p[0]; this.y = p[1];
+      }
+    } else if(this.vx || this.vy){
+      this.x += this.vx * dt;
+      this.y += this.vy * dt;
+    }
+
+    if(this.trailOn){
+      this.trail.push([this.x, this.y]);
+      if(this.trail.length > 16) this.trail.shift();
+    }
+
+    if(this.fadeAfter !== null && this.age > this.fadeAfter){
+      this.alpha -= dt / this.fadeDur;
+      if(this.alpha <= 0){ this.alpha = 0; this.dead = true; }
+    }
   }
 }
 
-function makeIMSProton(x, y){
-  add(new Mover({
-    kind:'ion', sym:'+', color:COL.proton, r:6.5,
-    wiggle:{amp:3, f:6, p:Math.random()*6.28},
-    wp:[{x, y, speed:0}],
-    custom: imsFlow,
-    life: 
+function addP(o){ const p = new Particle(o); particles.push(p); return p; }
+
+/* =========================================================
+   PROTON POOL (intermembrane space)
+   ========================================================= */
+function addIMSProton(x, y){
+  if(imsProtons.length > 48) return;
+  const p = new Particle({
+    kind:'proton', color:COL.proton, r:6.5,
+    x:x, y:y
+  });
+  p.stage = 0;
+  p.baseY = y;
+  p.speedX = 46 + Math.random()*22;
+  p.phase = Math.random()*6.283;
+  p.bob = 7 + Math.random()*7;
+  p.alpha = 1;
+  imsProtons.push(p);
+}
+
+function updateIMSProtons(dt){
+  const t = simTime;
+  for(let i = imsProtons.length-1; i >= 0; i--){
+    const p = imsProtons[i];
+
+    if(p.stage === 0){
+      p.x += p.speedX * dt;
+      p.baseY += Math.sin(t*1.1 + p.phase) * 5 * dt;
+      if(p.baseY < 110) p.baseY = 110;
+      if(p.baseY > 285) p.baseY = 285;
+      p.y = p.baseY + Math.sin(t*2.0 + p.phase) * p.bob * 0.4;
+      if(p.x > 1055) p.stage = 1;
+
+    } else if(p.stage === 1){
+      const tx = LAYOUT.syn.x, ty = 300;
+      const dx = tx - p.x, dy = ty - p.y;
+      const d = Math.hypot(dx,dy) || 1;
+      const sp = 190 * dt;
+      if(d < sp){ p.x = tx; p.y = ty; p.stage = 2; }
+      else { p.x += dx/d*sp; p.y += dy/d*sp; }
+
+    } else {
+      p.y += 200 * dt;
+      if(p.y > 512){
+        imsProtons.splice(i,1);
+        onProtonConsumed();
+      }
+    }
+  }
+
+  // keep the stream alive
+  if(imsProtons.length < 8){
+    addIMSProton(-25, 140 + Math.random()*140);
+  }
+}
+
+/* =========================================================
+   CHOREOGRAPHY — COMPLEX I / NADH
+   ========================================================= */
+function spawnNADH(){
+  const c1 = LAYOUT.c1;
+  addP({
+    kind:'pill', label:'NADH', color:COL.nadh,
+    path: [[-60, 665],[80, 650],[140, 590],[c1.cx, 514]],
+    speed: 155,
+    onDone: function(p){
+      p.label = 'NAD⁺';
+      p.color = COL.nad;
+      p.wait = 0.35;
+      p.setPath([[c1.cx,514],[130,600],[50,652],[-70,672]]);
+      p.onDone = function(q){ q.fadeAfter = 0; q.fadeDur = 0.9; };
+      // released proton
+      addP({
+        kind:'proton', color:COL.proton, r:5,
+        path:[[c1.cx-26, 520],[c1.cx-70, 560],[c1.cx-120, 600]],
+        speed:80,
+        onDone:function(q){ q.vy = -20; q.fadeAfter = 0; q.fadeDur = 1.0; }
+      });
+      fireElectronsThroughCI();
+    }
+  });
+}
+
+function fireElectronsThroughCI(){
+  const c1 = LAYOUT.c1;
+  for(let i = 0; i < 2; i++){
+    addP({
+      kind:'electron', r:5, trailOn:true,
+      path:[
+        [c1.cx - 10, 500],
+        [c1.cx + 18, 458],
+        [c1.cx - 18, 420],
+        [c1.cx + 12, MID_Y],
+        [c1.cx + c1.w/2 + 8, MID_Y]
+      ],
+      speed: 175,
+      wait: i * 0.16,
+      onDone: function(p){ p.fadeAfter = 0; p.fadeDur = 0.35; }
+    });
+  }
+  schedule(1.35, function(){
+    pumpProtonsAt(c1, 2);
+    startQCycle('I');
+  });
+}
+
+/* =========================================================
+   PROTON PUMPING
+   ========================================================= */
+function pumpProtonsAt(c, n){
+  for(let i = 0; i < n; i++){
+    const off = (i - (n-1)/2) * 28;
+    const startX = c.cx + off;
+    addP({
+      kind:'proton', color:COL.proton, r:7,
+      path:[
+        [startX, MEM_BOT + 58],
+        [startX, MEM_BOT + 8],
+        [c.cx + off*1.15, MEM_TOP + 45],
+        [c.cx + off*1.15, MEM_TOP - 25],
+        [c.cx + off*1.6, MEM_TOP - 70]
+      ],
+      speed: 125,
+      wait: i * 0.24,
+      onDone: function(p){
+        addIMSProton(p.x, p.y);
+        p.dead = true;
+      }
+    });
+  }
+}
+
+/* =========================================================
+   Q SHUTTLE
+   ========================================================= */
+function startQCycle(source){
+  const qp = LAYOUT.q;
+  const c3 = LAYOUT.c3;
+  const pickupX = source === 'I'
+    ? LAYOUT.c1.cx + LAYOUT.c1.w/2 + 10
+    : LAYOUT.c2.cx + LAYOUT.c2.w/2 + 10;
+
+  addP({
+    kind:'pill', label:'Q', color:COL.q,
+    path:[[qp.x, qp.y],[pickupX + 45, qp.y],[pickupX + 6, qp.y]],
+    speed: 160,
+    onDone: function(p){
+      p.wait = 0.2;
+      p.label = 'QH₂'; p.color = COL.qh2;
+      p.setPath([[pickupX+6, qp.y],[qp.x, qp.y],[c3.cx - c3.w/2 - 12, qp.y]]);
+      p.onDone = function(q){
+        q.wait = 0.25;
+        q.label = 'Q'; q.color = COL.q;
+        q.setPath([[c3.cx - c3.w/2 - 12, qp.y],[qp.x, qp.y],[qp.x, qp.y + 44]]);
+        q.onDone = function(r){ r.fadeAfter = 0; r.fadeDur = 1.0; };
+        onQDelivered();
+      };
+    }
+  });
+}
+
+/* =========================================================
+   COMPLEX III → CYTOCHROME c
+   ========================================================= */
+function onQDelivered(){
+  const c3 = LAYOUT.c3;
+  pumpProtonsAt(c3, 2);
+
+  for(let i = 0; i < 2; i++){
+    addP({
+      kind:'electron', r:5, trailOn:true,
+      path:[
+        [c3.cx - c3.w/2 + 8, MID_Y],
+        [c3.cx - 14, 366],
+        [c3.cx + 16, 334],
+        [c3.cx + c3.w/2 + 2, MEM_TOP - 22]
+      ],
+      speed: 175,
+      wait: i * 0.14,
+      onDone: function(p){ p.fadeAfter = 0; p.fadeDur = 0.35; }
+    });
+  }
+  startCytC();
+}
+
+function startCytC(){
+  const home = LAYOUT.cytc;
+  const c3 = LAYOUT.c3, c4 = LAYOUT.c4;
+  const dockIII = [c3.cx + c3.w/2 + 4, MEM_TOP - 22];
+  const dockIV  = [c4.cx - c4.w/2 - 4, MEM_TOP - 22];
+
+  addP({
+    kind:'cyt',
+    path:[[home.x, home.y], dockIII],
+    speed: 210,
+    onDone: function(p){
+      p.wait = 0.15;
+      p.setPath([dockIII, [home.x, home.y], dockIV]);
+      p.onDone = function(q){
+        q.wait = 0.15;
+        onCytCDelivered();
+        q.setPath([dockIV, [home.x, home.y]]);
+        q.onDone = function(r){ r.fadeAfter = 0; r.fadeDur = 0.6; };
+      };
+    }
+  });
+}
+
+/* =========================================================
+   COMPLEX IV → OXYGEN → WATER
+   ========================================================= */
+function onCytCDelivered(){
+  const c4 = LAYOUT.c4;
+  pumpProtonsAt(c4, 2);
+
+  for(let i = 0; i < 2; i++){
+    addP({
+      kind:'electron', r:5, trailOn:true,
+      path:[
+        [c4.cx - c4.w/2 + 4, MEM_TOP - 22],
+        [c4.cx - 16, 350],
+        [c4.cx + 16, 386],
+        [c4.cx - 8, 430],
+        [c4.cx, 486]
+      ],
+      speed: 175,
+      wait: i * 0.14,
+      onDone: function(p){ p.fadeAfter = 0; p.fadeDur = 0.35; }
+    });
+  }
+
+  o2Tally++;
+  if(o2Tally >= 2){
+    o2Tally = 0;
+    spawnOxygen();
+  }
+}
+
+function spawnOxygen(){
+  const c4 = LAYOUT.c4;
+  addP({
+    kind:'pill', label:'O₂', color:COL.o2,
+    path:[[c4.cx + 70, 712],[c4.cx + 34, 640],[c4.cx + 6, 560],[c4.cx, 500]],
+    speed: 140,
+    onDone: function(p){
+      p.dead = true;
+      for(let i = 0; i < 2; i++){
+        addP({
+          kind:'pill', label:'H₂O', color:COL.h2o,
+          path:[
+            [c4.cx, 500],
+            [c4.cx + (i ? 46 : -46), 580],
+            [c4.cx + (i ? 105 : -105), 665]
+          ],
+          speed: 125,
+          wait: i * 0.14,
+          onDone: function(q){
+            q.vx = (i ? 1 : -1) * 26;
+            q.vy = 34;
+            q.fadeAfter = 0;
+            q.fadeDur = 1.3;
+          }
+        });
+      }
+    }
+  });
+}
+
+/* =========================================================
+   COMPLEX II / FADH₂
+   ========================================================= */
+function spawnFADH2(){
+  if(!fadhEnabled) return;
+  const c2 = LAYOUT.c2;
+
+  addP({
+    kind:'pill', label:'FADH₂', color:COL.fadh,
+    path:[[-70, 705],[70, 695],[220, 640],[c2.cx - 6, 545],[c2.cx, 496]],
+    speed: 165,
+    onDone: function(p){
+      p.label = 'FAD'; p.color = COL.fad;
+      p.wait = 0.3;
+      p.setPath([[c2.cx,496],[240,610],[120,690],[-80,715]]);
+      p.onDone = function(q){ q.fadeAfter = 0; q.fadeDur = 0.9; };
+
+      for(let i = 0; i < 2; i++){
+        addP({
+          kind:'electron', r:5, trailOn:true,
+          path:[
+            [c2.cx, 490],
+            [c2.cx + (i ? 15 : -15), 450],
+            [c2.cx + (i ? -10 : 10), 415],
+            [c2.cx + c2.w/2 + 10, MID_Y]
+          ],
+          speed: 190,
+          wait: i * 0.16,
+          onDone: function(q){ q.fadeAfter = 0; q.fadeDur = 0.35; }
+        });
+      }
+      schedule(0.95, function(){ startQCycle('II'); });
+    }
+  });
+}
+
+/* =========================================================
+   ATP SYNTHASE
+   ========================================================= */
+function onProtonConsumed(){
+  protonTally++;
+  if(protonTally >= 2){
+    protonTally = 0;
+    spawnATP();
+  }
+}
+
+function spawnATP(){
+  const s = LAYOUT.syn;
+  addP({
+    kind:'pill', label:'ADP+Pi', color:COL.adp,
+    path:[[s.x + 165, 715],[s.x + 95, 655],[s.x + 34, 605]],
+    speed: 150,
+    onDone: function(p){
+      p.label = 'ATP';
+      p.color = COL.atp;
+      p.wait = 0.2;
+      p.setPath([[s.x + 34, 605],[s.x + 130, 668],[s.x + 245, 730]]);
+      p.onDone = function(q){
+        q.vx = 34; q.vy = 26;
+        q.fadeAfter = 0;
+        q.fadeDur = 1.3;
+      };
+    }
+  });
+}
+
+/* =========================================================
+   DRAWING — BACKGROUND
+   ========================================================= */
+let lipidCache = null;
+function buildLipids(){
+  const arr = [];
+  for(let x = 13; x < W; x += 26) arr.push(x);
+  lipidCache = arr;
+}
+
+function drawBackground(){
+  // intermembrane space
+  let g = ctx.createLinearGradient(0,0,0,MEM_TOP);
+  g.addColorStop(0,'#060b14');
+  g.addColorStop(1,'#0b1626');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,0,W,MEM_TOP);
+
+  // matrix
+  g = ctx.createLinearGradient(0,MEM_BOT,0,H);
+  g.addColorStop(0,'#0a1421');
+  g.addColorStop(1,'#05080e');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,MEM_BOT,W,H-MEM_BOT);
+
+  // membrane
+  g = ctx.createLinearGradient(0,MEM_TOP,0,MEM_BOT);
+  g.addColorStop(0,'#172236');
+  g.addColorStop(0.5,'#1e2c45');
+  g.addColorStop(1,'#172236');
+  ctx.fillStyle = g;
+  ctx.fillRect(0,MEM_TOP,W,MEM_BOT-MEM_TOP);
+
+  // membrane edge lines
+  ctx.strokeStyle = 'rgba(120,170,240,0.18)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  ctx.moveTo(0,MEM_TOP+0.5); ctx.lineTo(W,MEM_TOP+0.5);
+  ctx.moveTo(0,MEM_BOT-0.5); ctx.lineTo(W,MEM_BOT-0.5);
+  ctx.stroke();
+
+  // phospholipids
+  if(!lipidCache) buildLipids();
+  ctx.save();
+  for(let i = 0; i < lipidCache.length; i++){
+    const x = lipidCache[i];
+    ctx.fillStyle = 'rgba(120,165,225,0.13)';
+    ctx.beginPath(); ctx.arc(x, MEM_TOP + 12, 5.5, 0, 6.283); ctx.fill();
+    ctx.beginPath(); ctx.arc(x, MEM_BOT - 12, 5.5, 0, 6.283); ctx.fill();
+
+    ctx.strokeStyle = 'rgba(120,165,225,0.07)';
+    ctx.lineWidth = 2;
+    ctx.beginPath();
+    ctx.moveTo(x-2.6, MEM_TOP+18); ctx.lineTo(x-2.6, MEM_TOP+66);
+    ctx.moveTo(x+2.6, MEM_TOP+18); ctx.lineTo(x+2.6, MEM_TOP+66);
+    ctx.moveTo(x-2.6, MEM_BOT-66); ctx.lineTo(x-2.6, MEM_BOT-18);
+    ctx.moveTo(x+2.6, MEM_BOT-66); ctx.lineTo(x+2.6, MEM_BOT-18);
+    ctx.stroke();
+  }
+  ctx.restore();
+}
+
+/* =========================================================
+   DRAWING — COMPLEXES
+   ========================================================= */
+function drawComplex(c){
+  const x = c.cx - c.w/2;
+  const y = c.top;
+  const h = c.bot - c.top;
+  const pulse = 0.5 + 0.5*Math.sin(simTime*1.6 + c.cx*0.012);
+
+  ctx.save();
+
+  // halo
+  ctx.shadowColor = rgba(c.color, 0.5);
+  ctx.shadowBlur = 20 + pulse*16;
+
+  roundRect(ctx, x, y, c.w, h, 18);
+  const g = ctx.createLinearGradient(x, y, x+c.w, y+h);
+  g.addColorStop(0,   rgba(c.color, 0.34));
+  g.addColorStop(0.45,rgba(c.color, 0.13));
+  g.addColorStop(1,   rgba(c.color, 0.28));
+  ctx.fillStyle = g;
+  ctx.fill();
+
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = rgba(c.color, 0.72);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // inner sheen
+  roundRect(ctx, x+5, y+5, c.w-10, h-10, 14);
+  ctx.strokeStyle = rgba(c.color, 0.16);
+  ctx.lineWidth = 1;
+  ctx.stroke();
+
+  // numeral
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '700 30px ui-sans-serif,system-ui,sans-serif';
+  ctx.fillStyle = rgba(c.color, 0.9);
+  ctx.fillText(c.num, c.cx, (MEM_TOP+MEM_BOT)/2 - 4);
+
+  // name
+  ctx.font = '600 12px ui-sans-serif,system-ui,sans-serif';
+  ctx.fillStyle = rgba(c.color, 0.62);
+  ctx.fillText(c.name, c.cx, 536);
+
+  ctx.restore();
+}
+
+/* =========================================================
+   DRAWING — ATP SYNTHASE
+   ========================================================= */
+function drawSynthase(){
+  const s = LAYOUT.syn;
+
+  ctx.save();
+
+  // F0 channel in membrane
+  ctx.shadowColor = rgba(COL.atpSyn, 0.55);
+  ctx.shadowBlur = 18;
+  roundRect(ctx, s.x-27, MEM_TOP, 54, MEM_BOT-MEM_TOP, 14);
+  ctx.fillStyle = rgba(COL.atpSyn, 0.14);
+  ctx.fill();
+  ctx.shadowBlur = 0;
+  ctx.strokeStyle = rgba(COL.atpSyn, 0.62);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  // shaft
+  ctx.strokeStyle = rgba(COL.atpSyn, 0.42);
+  ctx.lineWidth = 2.5;
+  ctx.beginPath();
+  ctx.moveTo(s.x-9, MEM_BOT);
+  ctx.lineTo(s.x-9, s.headY - s.headR*0.72);
+  ctx.moveTo(s.x+9, MEM_BOT);
+  ctx.lineTo(s.x+9, s.headY - s.headR*0.72);
+  ctx.stroke();
+
+  // F1 head (rotating)
+  ctx.translate(s.x, s.headY);
+  ctx.rotate(simTime * 1.15);
+
+  ctx.beginPath();
+  ctx.arc(0,0,s.headR,0,6.283);
+  ctx.fillStyle = rgba(COL.atpSyn, 0.10);
+  ctx.fill();
+  ctx.strokeStyle = rgba(COL.atpSyn, 0.58);
+  ctx.lineWidth = 2;
+  ctx.stroke();
+
+  for(let i = 0; i < 6; i++){
+    const a = i/6*6.283;
+    ctx.beginPath();
+    ctx.arc(Math.cos(a)*s.headR*0.55, Math.sin(a)*s.headR*0.55, s.headR*0.26, 0, 6.283);
+    ctx.fillStyle = rgba(COL.atpSyn, 0.17);
+    ctx.fill();
+    ctx.strokeStyle = rgba(COL.atpSyn, 0.36);
+    ctx.lineWidth = 1;
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // label
+  ctx.save();
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.font = '600 12px ui-sans-serif,system-ui,sans-serif';
+  ctx.fillStyle = rgba(COL.atpSyn, 0.62);
+  ctx.fillText('ATP synthase', s.x, s.headY + s.headR + 26);
+  ctx.restore();
+}
+
+/* =========================================================
+   DRAWING — PARTICLES
+   ========================================================= */
+function drawProton(p){
+  const r = p.r;
+  ctx.save();
+  ctx.globalAlpha = p.alpha;
+
+  const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, r*3.2);
+  g.addColorStop(0,   rgba(COL.proton, 0.85));
+  g.addColorStop(0.32,rgba(COL.proton, 0.30));
+  g.addColorStop(1,   rgba(COL.proton, 0));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(p.x, p.y, r*3.2, 0, 6.283); ctx.fill();
+
+  ctx.fillStyle = COL.proton;
+  ctx.beginPath(); ctx.arc(p.x, p.y, r*0.72, 0, 6.283); ctx.fill();
+
+  ctx.strokeStyle = '#3a1204';
+  ctx.lineWidth = 1.7;
+  ctx.lineCap = 'round';
+  ctx.beginPath();
+  ctx.moveTo(p.x - r*0.36, p.y); ctx.lineTo(p.x + r*0.36, p.y);
+  ctx.moveTo(p.x, p.y - r*0.36); ctx.lineTo(p.x, p.y + r*0.36);
+  ctx.stroke();
+
+  ctx.restore();
+}
+
+function drawElectron(p){
+  ctx.save();
+  ctx.globalAlpha = p.alpha;
+
+  if(p.trail.length > 1){
+    ctx.lineCap = 'round';
+    for(let i = 1; i < p.trail.length; i++){
+      const a = i / p.trail.length;
+      ctx.beginPath();
+      ctx.moveTo(p.trail[i-1][0], p.trail[i-1][1]);
+      ctx.lineTo(p.trail[i][0], p.trail[i][1]);
+      ctx.strokeStyle = rgba(COL.electron, a*a*0.75);
+      ctx.lineWidth = 0.6 + a*3.6;
+      ctx.stroke();
+    }
+  }
+
+  const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 15);
+  g.addColorStop(0,   'rgba(225,250,255,1)');
+  g.addColorStop(0.28,rgba(COL.electron, 0.9));
+  g.addColorStop(1,   rgba(COL.electron, 0));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(p.x, p.y, 15, 0, 6.283); ctx.fill();
+
+  ctx.fillStyle = '#eafaff';
+  ctx.beginPath(); ctx.arc(p.x, p.y, 3.3, 0, 6.283); ctx.fill();
+
+  ctx.restore();
+}
+
+function drawPill(p){
+  ctx.save();
+  ctx.globalAlpha = p.alpha;
+  ctx.font = '700 12px ui-sans-serif,system-ui,sans-serif';
+
+  const w = ctx.measureText(p.label).width + 22;
+  const h = 23;
+  const x = p.x - w/2, y = p.y - h/2;
+
+  roundRect(ctx, x, y, w, h, 11.5);
+  ctx.fillStyle = rgba(p.color, 0.16);
+  ctx.fill();
+
+  ctx.shadowColor = rgba(p.color, 0.95);
+  ctx.shadowBlur = 16;
+  ctx.strokeStyle = rgba(p.color, 0.92);
+  ctx.lineWidth = 1.4;
+  ctx.stroke();
+  ctx.shadowBlur = 0;
+
+  ctx.fillStyle = p.color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(p.label, p.x, p.y + 0.5);
+
+  ctx.restore();
+}
+
+function drawCytC(p){
+  ctx.save();
+  ctx.globalAlpha = p.alpha;
+
+  const g = ctx.createRadialGradient(p.x, p.y, 0, p.x, p.y, 22);
+  g.addColorStop(0,   rgba(COL.cytc, 0.55));
+  g.addColorStop(1,   rgba(COL.cytc, 0));
+  ctx.fillStyle = g;
+  ctx.beginPath(); ctx.arc(p.x, p.y, 22, 0, 6.283); ctx.fill();
+
+  ctx.beginPath();
+  ctx.arc(p.x, p.y, 11, 0, 6.283);
+  ctx.fillStyle = rgba(COL.cytc, 0.18);
+  ctx.fill();
+  ctx.strokeStyle = rgba(COL.cytc, 0.92);
+  ctx.lineWidth = 1.5;
+  ctx.stroke();
+
+  ctx.fillStyle = COL.cytc;
+  ctx.font = '700 10px ui-sans-serif,system-ui,sans-serif';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText('c', p.x, p.y + 0.5);
+
+  ctx.restore();
+}
+
+function drawParticle(p){
+  switch(p.kind){
+    case 'proton':   drawProton(p);   break;
+    case 'electron': drawElectron(p); break;
+    case 'pill':     drawPill(p);     break;
+    case 'cyt':      drawCytC(p);     break;
+    default:
+      ctx.save();
+      ctx.globalAlpha = p.alpha;
+      ctx.fillStyle = p.color;
+      ctx.beginPath(); ctx.arc(p.x, p.y, p.r, 0, 6.283); ctx.fill();
+      ctx.restore();
+  }
+}
+
+/* =========================================================
+   DRAWING — REGION LABELS
+   ========================================================= */
+function drawRegionLabels(){
+  ctx.save();
+  ctx.font = '700 11px ui-sans-serif,system-ui,sans-serif';
+  ctx.fillStyle = 'rgba(125,142,166,0.5)';
+  ctx.textBaseline = 'middle';
+
+  ctx.textAlign = 'left';
+  ctx.fillText('INTERMEMBRANE SPACE', 28, 30);
+  ctx.fillText('MATRIX', 28, H - 26);
+
+  ctx.textAlign = 'right';
+  ctx.fillText('INNER MITOCHONDRIAL MEMBRANE', W - 28, H - 26);
+
+  // high / low proton markers
+  ctx.font = '600 11px ui-sans-serif,system-ui,sans-serif';
+  ctx.textAlign = 'left';
+  ctx.fillStyle = 'rgba(255,154,107,0.55)';
+  ctx.fillText('H⁺ HIGH', 28, 52);
+  ctx.fillStyle = 'rgba(255,154,107,0.25)';
+  ctx.fillText('H⁺ LOW', 28, H - 48);
+
+  ctx.restore();
+}
+
+/* =========================================================
+   MAIN RENDER
+   ========================================================= */
+function render(){
+  ctx.clearRect(0, 0, W, H);
+
+  drawBackground();
+  drawSynthase();
+
+  drawComplex(LAYOUT.c1);
+  drawComplex(LAYOUT.c2);
+  drawComplex(LAYOUT.c3);
+  drawComplex(LAYOUT.c4);
+
+  for(let i = 0; i < imsProtons.length; i++) drawProton(imsProtons[i]);
+
+  for(let i = 0; i < particles.length; i++) drawParticle(particles[i]);
+
+  drawRegionLabels();
+}
+
+/* =========================================================
+   UPDATE
+   ========================================================= */
+function update(dt){
+  simTime += dt;
+
+  runTimers();
+
+  for(let i = particles.length - 1; i >= 0; i--){
+    const p = particles[i];
+    p.update(dt);
+    if(p.dead) particles.splice(i,1);
+  }
+
+  updateIMSProtons(dt);
+}
+
+/* =========================================================
+   ANIMATION LOOP
+   ========================================================= */
+let lastT = performance.now();
+function frame(now){
+  let dt = (now - lastT) / 1000;
+  lastT = now;
+  if(dt > 0.06) dt = 0.06;
+  if(dt < 0) dt = 0;
+
+  if(running) update(dt * speedMul);
+  render();
+
+  requestAnimationFrame(frame);
+}
+
+/* =========================================================
+   INITIAL SCENE SEEDING
+   ========================================================= */
+function seed(){
+  // initial proton gradient in the IMS
+  for(let i = 0; i < 20; i++){
+    addIMSProton(20 + Math.random()*950, 120 + Math.random()*150);
+  }
+
+  // start the reaction chain
+  spawnNADH();
+  schedule(1.2, spawnFADH2);
+  schedule(2.0, spawnOxygen);
+
+  // recurring sources
+  loop(4.0, spawnNADH, 4.0);
+  loop(4.8, spawnFADH2, 2.4);
+  loop(6.5, spawnOxygen, 5.0);
+}
+
+/* =========================================================
+   UI WIRING
+   ========================================================= */
+const playBtn = document.getElementById('playBtn');
+playBtn.addEventListener('click', function(){
+  running = !running;
+  playBtn.textContent = running ? '⏸ Pause' : '▶ Play';
+  playBtn.classList.toggle('active', running);
+});
+
+document.querySelectorAll('[data-speed]').forEach(function(b){
+  b.addEventListener('click', function(){
+    document.querySelectorAll('[data-speed]').forEach(function(x){
+      x.classList.remove('active');
+    });
+    b.classList.add('active');
+    speedMul = parseFloat(b.dataset.speed);
+  });
+});
+
+document.getElementById('fadhToggle').addEventListener('change', function(e){
+  fadhEnabled = e.target.checked;
+});
+
+/* =========================================================
+   GO
+   ========================================================= */
+seed();
+requestAnimationFrame(frame);
+
+})();
+</script>
+</body>
+</html>
